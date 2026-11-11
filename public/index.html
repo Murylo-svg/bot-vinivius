@@ -64,6 +64,9 @@
             <div id="status-indicator" title="Status do Servidor"></div>
             <button class="btn-ranking" onclick="abrirRanking()">🏆 Ranking</button>
             <button class="btn-limpar" onclick="limparConversa()">🗑️</button>
+            <a id="link-conta" href="/login.html" style="color: #00ff88; margin-left: 15px; text-decoration: none; font-weight: bold;">👤 Entrar</a>
+            <!-- Exibido apenas para admins; o acesso real é validado no servidor (/dashboard) -->
+            <a id="link-painel" href="/dashboard" style="display: none; color: #f1c40f; margin-left: 15px; text-decoration: none; font-weight: bold;">📊 Painel</a>
         </div>
     </div>
 
@@ -107,6 +110,20 @@
             }
         }
         checkHealth(); setInterval(checkHealth, 60000); // Verifica a cada 1 minuto
+
+        // Mostra o usuário logado e o link do painel (somente admins)
+        async function verificarConta() {
+            const token = localStorage.getItem('token');
+            if (!token) return;
+            try {
+                const res = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
+                if (!res.ok) return;
+                const { usuario } = await res.json();
+                document.getElementById('link-conta').textContent = '👤 ' + usuario.nome;
+                if (usuario.role === 'admin') document.getElementById('link-painel').style.display = 'inline';
+            } catch (err) { /* não crítico */ }
+        }
+        verificarConta();
 
         function addMsg(texto, tipo) {
             const div = document.createElement('div');

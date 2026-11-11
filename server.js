@@ -1,12 +1,27 @@
 require('dotenv').config();
+const http = require('http');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const chatRoutes = require('./routes/chatRoutes');
 const rankingRoutes = require('./routes/rankingRoutes');
 const documentRoutes = require('./routes/documentRoutes');
+const authRoutes = require('./routes/authRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
+const { verificarTokenEObterUsuario } = require('./middlewares/auth');
+const { configurarSocket } = require('./realtime/socket');
 
 const app = express();
+const server = http.createServer(app);
+
+// WebSockets (Socket.IO) no mesmo servidor HTTP; disponível nos controllers via req.app.get('io')
+const io = configurarSocket(server);
+app.set('io', io);
+
+if (!process.env.JWT_SECRET) {
+    console.warn("⚠️ JWT_SECRET não definido no .env: login, cadastro e rotas protegidas não funcionarão.");
+}
 
 // CONFIGURAÇÕES
 app.use(cors());
@@ -46,8 +61,49 @@ mongoose.connect(mongoUri, {
 app.use('/api/chat', chatRoutes);
 app.use('/api/ranking', rankingRoutes);
 app.use('/api/chat', documentRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/analytics', analyticsRoutes); // GET /api/analytics/tokens
+
+// DASHBOARD ADMINISTRATIVO (página protegida no servidor)
+// O dashboard.html fica FORA da pasta public/, então o express.static não o expõe.
+// Navegação de página não envia o header Authorization, por isso a página é liberada
+// com o cookie HttpOnly definido no login. Os DADOS continuam protegidos pela API (Bearer + admin).
+function lerCookie(req, nome) {
+    const cookies = req.headers.cookie;
+    if (!cookies) return null;
+    for (const parte of cookies.split(';')) {
+        const indice = parte.indexOf('=');
+        if (indice > -1 && parte.slice(0, indice).trim() === nome) {
+            try { return decodeURIComponent(parte.slice(indice + 1).trim()); } catch (e) { return null; }
+        }
+    }
+    return null;
+}
+
+async function paginaDashboard(req, res, next) {
+    try {
+        res.set('Cache-Control', 'no-store');
+        const usuario = await verificarTokenEObterUsuario(lerCookie(req, 'token'));
+        if (!usuario) {
+            return res.redirect('/login.html?proximo=/dashboard');
+        }
+        if (usuario.role === 'admin') {
+            return res.sendFile(path.join(__dirname, 'dashboard.html'));
+        } else {
+            return res.status(403).send(
+                '<!DOCTYPE html><html lang="pt-br"><head><meta charset="UTF-8"><title>Acesso negado</title></head>' +
+                '<body style="font-family:Segoe UI,sans-serif;background:#121212;color:#fff;display:grid;place-items:center;height:100vh;margin:0">' +
+                '<div style="text-align:center"><h1 style="color:#e74c3c">403 — Acesso negado</h1>' +
+                '<p>Esta área é exclusiva para administradores.</p><a style="color:#00ff88" href="/">Voltar ao chat</a></div></body></html>'
+            );
+        }
+    } catch (err) {
+        return next(err);
+    }
+}
+app.get(['/dashboard', '/dashboard.html'], paginaDashboard);
 
 const PORTA = process.env.PORT || 3000;
-app.listen(PORTA, () => {
+server.listen(PORTA, () => {
     console.log(`🚀 SERVIDOR RODANDO EM http://localhost:${PORTA}`);
 });
