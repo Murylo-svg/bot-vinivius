@@ -5,6 +5,13 @@ const { verificarTokenEObterUsuario } = require('../middlewares/auth');
 
 const SALA_ADMINS = 'admins';
 
+// Origens que podem abrir o WebSocket direto no Render (ex.: o domínio do Vercel).
+// A autenticação é feita pelo JWT do handshake (sem cookies), então o CORS aqui não libera dados.
+function origensPermitidas() {
+    const lista = (process.env.CORS_ORIGINS || '').split(',').map(o => o.trim().replace(/\/$/, '')).filter(Boolean);
+    return lista.length ? lista : true;
+}
+
 /**
  * Servidor Socket.IO acoplado ao MESMO servidor HTTP do Express (sem segunda porta).
  * - Toda conexão precisa de um JWT válido em handshake.auth.token.
@@ -12,7 +19,9 @@ const SALA_ADMINS = 'admins';
  *   que é a única que recebe o evento administrativo "novoGastoDeToken".
  */
 function configurarSocket(httpServer) {
-    const io = new Server(httpServer);
+    const io = new Server(httpServer, {
+        cors: { origin: origensPermitidas(), methods: ['GET', 'POST'] }
+    });
 
     io.use(async (socket, next) => {
         try {

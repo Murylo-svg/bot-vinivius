@@ -7,7 +7,8 @@
 
     <!-- Chart.js (REQ-007) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Cliente Socket.IO servido pelo próprio servidor da aplicação -->
+    <!-- Configuração pública (URL do WebSocket no Render) e cliente Socket.IO do próprio servidor -->
+    <script src="/config.js"></script>
     <script src="/socket.io/socket.io.js"></script>
 
     <style>
@@ -460,7 +461,10 @@
             if (typeof io === 'undefined') return;
             const status = el('statusTempoReal');
 
-            const socket = io({ auth: { token: obterToken() } });
+            // No Vercel o WebSocket vai direto ao Render; acessando o Render direto, usa a mesma origem
+            const config = window.APP_CONFIG || {};
+            const opcoes = { auth: { token: obterToken() }, transports: ['websocket', 'polling'] };
+            const socket = config.socketUrl ? io(config.socketUrl, opcoes) : io(opcoes);
 
             socket.on('connect', () => {
                 status.className = 'ao-vivo conectado';

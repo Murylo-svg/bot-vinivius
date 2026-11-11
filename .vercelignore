@@ -1,0 +1,19 @@
+# O Vercel publica SOMENTE o front-end estático (public/) e o vercel.json.
+# Todo o backend roda no Render. O dashboard.html fica de fora de propósito:
+# ele só é entregue pelo Render, depois de verificar que o usuário é admin.
+server.js
+index.js
+teste.js
+dashboard.html
+controllers/
+routes/
+models/
+middlewares/
+realtime/
+tests/
+render.yaml
+package.json
+package-lock.json
+node_modules/
+.env
+.env.*

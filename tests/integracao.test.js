@@ -19,6 +19,9 @@ process.env.JWT_SECRET = 'segredo-de-teste';
 process.env.GEMINI_API_KEY = 'fake';
 process.env.MONGO_URI = 'mongodb://127.0.0.1:9/inexistente'; // nunca é usado de fato
 process.env.PORT = String(PORTA);
+process.env.CORS_ORIGINS = 'https://meu-app.vercel.app/';
+delete process.env.SOCKET_PUBLIC_URL;
+delete process.env.RENDER_EXTERNAL_URL;
 process.chdir(REPO);
 
 // ---------- Fake do Gemini ----------
@@ -397,13 +400,28 @@ test('rotas existentes continuam respondendo', async () => {
     assert.strictEqual((await req('GET', '/login.html')).status, 200);
 });
 
-test('limite de tentativas de login → 429', async () => {
+test('deploy: /config.js e CORS do WebSocket só para a origem configurada', async () => {
+    const cfg = await req('GET', '/config.js');
+    assert.strictEqual(cfg.status, 200);
+    assert.match(cfg.headers.get('content-type'), /javascript/);
+    assert.strictEqual(cfg.texto, 'window.APP_CONFIG = {"socketUrl":""};');
+
+    const handshake = (origem) => fetch(`${BASE}/socket.io/?EIO=4&transport=polling`, { headers: { Origin: origem } });
+    const permitido = await handshake('https://meu-app.vercel.app');
+    assert.strictEqual(permitido.headers.get('access-control-allow-origin'), 'https://meu-app.vercel.app');
+    const negado = await handshake('https://site-malicioso.com');
+    assert.notStrictEqual(negado.headers.get('access-control-allow-origin'), 'https://site-malicioso.com');
+});
+
+test('limite de tentativas de login por email → 429 (mesmo trocando de IP)', async () => {
     let ultimo;
-    for (let i = 0; i < 12; i++) {
-        ultimo = await req('POST', '/api/auth/login', { body: { email: 'comum@x.com', senha: 'errada' } });
+    for (let i = 0; i < 9; i++) {
+        ultimo = await req('POST', '/api/auth/login', { body: { email: 'Comum@x.com', senha: 'errada' } });
     }
     assert.strictEqual(ultimo.status, 429);
     assert.ok(Number(ultimo.headers.get('retry-after')) > 0);
+    // outra conta no mesmo IP continua podendo tentar
+    assert.strictEqual((await req('POST', '/api/auth/login', { body: { email: 'admin@x.com', senha: 'abcdef' } })).status, 200);
 });
 
 test.after(() => setTimeout(() => process.exit(0), 100));

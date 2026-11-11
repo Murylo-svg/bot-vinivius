@@ -106,6 +106,15 @@ async function paginaDashboard(req, res, next) {
 }
 app.get(['/dashboard', '/dashboard.html'], paginaDashboard);
 
+// Configuração pública do front-end (sem segredos).
+// Quando o site é servido pelo Vercel, o WebSocket precisa ir direto ao Render
+// (o proxy do Vercel não mantém conexões WebSocket). No Render, RENDER_EXTERNAL_URL é automático.
+app.get('/config.js', (req, res) => {
+    const config = { socketUrl: process.env.SOCKET_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '' };
+    res.type('application/javascript').set('Cache-Control', 'no-store')
+        .send(`window.APP_CONFIG = ${JSON.stringify(config)};`);
+});
+
 const PORTA = process.env.PORT || 3000;
 server.listen(PORTA, () => {
     console.log(`🚀 SERVIDOR RODANDO EM http://localhost:${PORTA}`);
