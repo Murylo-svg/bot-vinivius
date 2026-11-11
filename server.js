@@ -24,6 +24,9 @@ if (!process.env.JWT_SECRET) {
 }
 
 // CONFIGURAÇÕES
+// Atrás de proxy/hospedagem (Render, Railway, Heroku...), defina TRUST_PROXY=1 para que
+// req.ip seja o IP real do cliente (usado pelo limitador de tentativas de login).
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));

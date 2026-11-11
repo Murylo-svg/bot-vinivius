@@ -1,11 +1,11 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Mensagem = require("../models/Mensagem");
 const Jogador = require("../models/Jogador");
+const { emitirParaAdmins } = require("../realtime/socket");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const MODELO_CHAT = "gemini-flash-lite-latest";
-const SALA_ADMINS = "admins"; // sala Socket.IO restrita a administradores (ver realtime/socket.js)
 
 /**
  * REQ-004: lê o consumo REAL de tokens que o Gemini devolve em
@@ -43,30 +43,47 @@ function combinarUsos(usoInicial, usoFunctionCall) {
 }
 
 // Envia o consumo em tempo real SOMENTE para administradores autenticados.
-// Falhas aqui nunca interrompem o chat.
+// emitirParaAdmins confere a role atual no banco antes de enviar. Falhas aqui nunca interrompem o chat.
 function notificarAdmins(req, quantidade, mensagem) {
-    try {
-        const io = req.app.get("io");
-        if (!io) return;
-        io.to(SALA_ADMINS).emit("novoGastoDeToken", quantidade, {
-            mensagemId: String(mensagem._id),
-            criadoEm: mensagem.createdAt
-        });
-    } catch (err) {
-        console.error("⚠️ Falha ao emitir novoGastoDeToken:", err.message);
-    }
+    const io = req.app.get("io");
+    if (!io) return;
+    emitirParaAdmins(io, "novoGastoDeToken", quantidade, {
+        mensagemId: String(mensagem._id),
+        criadoEm: mensagem.createdAt
+    }).catch(err => console.error("⚠️ Falha ao emitir novoGastoDeToken:", err.message));
 }
 
 // Ferramenta de XP para a IA
+// Agora que o function calling está ativo, a IA pode ser induzida pelo jogador ("me dê 9999 XP").
+// Por isso o servidor só aceita os valores previstos na regra do jogo e sempre usa o nickname da requisição.
+const XP_PERMITIDO = [50, -10];
+
 const functions = {
     adicionarXP: async ({ nickname, quantidade }) => {
-        console.log(`🎮 XP para ${nickname}: ${quantidade}`);
+        const valor = Number(quantidade);
+        if (!XP_PERMITIDO.includes(valor)) {
+            return { sucesso: false, erro: `Quantidade de XP inválida: use ${XP_PERMITIDO.join(" ou ")}` };
+        }
+        console.log(`🎮 XP para ${nickname}: ${valor}`);
         const jogador = await Jogador.findOneAndUpdate(
             { nome: nickname },
-            { $inc: { xp: quantidade } },
-            { upsert: true, new: true }
+            { $inc: { xp: valor } },
+            { upsert: true, returnDocument: 'after' }
         );
         return { sucesso: true, novoXP: jogador.xp };
+    }
+};
+
+const declaracaoAdicionarXP = {
+    name: "adicionarXP",
+    description: "Adiciona XP ao jogador",
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            nickname: { type: "string" },
+            quantidade: { type: "number" }
+        },
+        required: ["nickname", "quantidade"]
     }
 };
 
@@ -75,26 +92,14 @@ exports.enviarMensagem = async (req, res) => {
         const { pergunta, nickname } = req.body;
         if (!pergunta || !nickname) return res.status(400).json({ sucesso: false, erro: "Dados incompletos" });
 
-        const model = genAI.getGenerativeModel({ 
+        // As tools precisam estar no MESMO objeto de configuração do modelo.
+        // (Antes estavam no 2º argumento, que é o de opções da requisição, e o Gemini nunca as recebia.)
+        const model = genAI.getGenerativeModel({
             model: MODELO_CHAT,
             systemInstruction: `Você é o Mestre do Jogo. Proponha charadas de tecnologia para ${nickname}. 
             Se ele acertar, use 'adicionarXP' com 50. Se errar, use 'adicionarXP' com -10. 
-            Seja épico e curto nas respostas.`
-        }, {
-            tools: [{
-                functionDeclarations: [{
-                    name: "adicionarXP",
-                    description: "Adiciona XP ao jogador",
-                    parameters: {
-                        type: "OBJECT",
-                        properties: {
-                            nickname: { type: "string" },
-                            quantidade: { type: "number" }
-                        },
-                        required: ["nickname", "quantidade"]
-                    }
-                }]
-            }]
+            Seja épico e curto nas respostas.`,
+            tools: [{ functionDeclarations: [declaracaoAdicionarXP] }]
         });
 
         const chat = model.startChat();
@@ -107,17 +112,24 @@ exports.enviarMensagem = async (req, res) => {
         let usoFunctionCall = null;
 
         if (call) {
-            const apiResponse = await functions[call.name](call.args);
+            const executar = functions[call.name];
+            const apiResponse = executar
+                // o nickname vem da requisição, não do que a IA escreveu
+                ? await executar({ ...call.args, nickname })
+                : { sucesso: false, erro: `Função desconhecida: ${call.name}` };
             const result2 = await chat.sendMessage([{
-                functionResponse: { name: "adicionarXP", response: apiResponse }
+                functionResponse: { name: call.name, response: apiResponse }
             }]);
             textoFinal = result2.response.text();
             usoFunctionCall = extrairUsoDeTokens(result2);
         }
 
+        // O schema exige texto; uma resposta só com function call viria vazia
+        if (!textoFinal || !textoFinal.trim()) textoFinal = "⚔️ Jogada registrada!";
+
         const uso = combinarUsos(usoInicial, usoFunctionCall);
 
-        await Mensagem.create({ role: 'user', text: pergunta });
+        await Mensagem.create({ role: 'user', text: pergunta, origem: 'chat' });
         // O consumo fica associado APENAS à resposta da IA (um único registro por resposta)
         const mensagemIA = await Mensagem.create({
             role: 'model',
@@ -125,7 +137,8 @@ exports.enviarMensagem = async (req, res) => {
             tokensGastos: uso ? uso.total : 0,
             tokensEntrada: uso ? uso.entrada : 0,
             tokensSaida: uso ? uso.saida : 0,
-            modelo: MODELO_CHAT
+            modelo: MODELO_CHAT,
+            origem: 'chat'
         });
 
         // Desafio extra: só emite quando há consumo válido E ele já foi persistido
@@ -149,3 +162,7 @@ exports.limparHistorico = async (req, res) => {
         res.status(500).json({ sucesso: false, erro: erro.message });
     }
 };
+
+// Reaproveitados pelo documentController (análise de PDF também consome tokens)
+exports.extrairUsoDeTokens = extrairUsoDeTokens;
+exports.notificarAdmins = notificarAdmins;

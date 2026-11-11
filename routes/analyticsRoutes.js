@@ -102,6 +102,17 @@ async function obterAnalyticsDeTokens(req, res) {
                         { $group: { _id: null, tokens: { $sum: '$tokensGastos' }, mensagens: { $sum: 1 } } }
                     ],
 
+                    // Consumo por origem (chat x análise de documentos)
+                    porOrigem: [
+                        {
+                            $group: {
+                                _id: { $ifNull: ['$origem', 'chat'] }, // mensagens antigas não têm o campo
+                                tokens: { $sum: '$tokensGastos' },
+                                mensagens: { $sum: 1 }
+                            }
+                        }
+                    ],
+
                     // Horários de maior atividade (últimos 30 dias)
                     porHora: [
                         { $match: { createdAt: { $gte: inicio30Dias } } },
@@ -150,6 +161,9 @@ async function obterAnalyticsDeTokens(req, res) {
         }));
         const pico = resultado.porHora[0]; // já ordenado por mensagens no MongoDB
 
+        const porOrigem = { chat: { tokens: 0, mensagens: 0 }, documento: { tokens: 0, mensagens: 0 } };
+        resultado.porOrigem.forEach(o => { porOrigem[o._id] = { tokens: o.tokens, mensagens: o.mensagens }; });
+
         return res.status(200).json({
             sucesso: true,
             geradoEm: agora.toISOString(),
@@ -171,6 +185,7 @@ async function obterAnalyticsDeTokens(req, res) {
                 ultimos7Dias: { tokens: periodo7.tokens || 0, mensagens: periodo7.mensagens || 0 },
                 ultimos30Dias: { tokens: periodo30.tokens || 0, mensagens: periodo30.mensagens || 0 }
             },
+            porOrigem,
             porDia,
             porHora,
             horarioDePico: pico ? { hora: pico._id, mensagens: pico.mensagens, tokens: pico.tokens } : null

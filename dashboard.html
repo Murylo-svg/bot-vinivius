@@ -362,8 +362,10 @@
             el('cardMensagensDetalhe').textContent = `${formatador.format(t.respostasIA)} respostas da IA`;
 
             definirValor('cardTokens', formatador.format(t.tokens), piscarTokens);
+            const origem = dados.porOrigem || { chat: { tokens: 0 }, documento: { tokens: 0 } };
             el('cardTokensDetalhe').textContent =
-                `${formatador.format(t.tokensEntrada)} entrada · ${formatador.format(t.tokensSaida)} saída`;
+                `${formatador.format(t.tokensEntrada)} entrada · ${formatador.format(t.tokensSaida)} saída · ` +
+                `${formatador.format(origem.documento.tokens)} em documentos`;
 
             definirValor('cardMedia', t.respostasComTokens ? formatador.format(t.mediaTokensPorResposta) : '—', piscarTokens);
             el('cardMediaDetalhe').textContent = t.respostasComTokens

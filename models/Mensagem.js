@@ -16,7 +16,8 @@ const MensagemSchema = new mongoose.Schema({
     // já que entrada e saída costumam ter preços diferentes.
     tokensEntrada: { type: Number, default: 0 },  // usageMetadata.promptTokenCount
     tokensSaida: { type: Number, default: 0 },    // usageMetadata.candidatesTokenCount
-    modelo: { type: String }                      // ex.: "gemini-flash-lite-latest"
+    modelo: { type: String },                     // ex.: "gemini-flash-lite-latest"
+    origem: { type: String, enum: ['chat', 'documento'], default: 'chat' } // de onde veio o consumo
 });
 
 // Acelera os agrupamentos por data do dashboard
